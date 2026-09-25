@@ -164,6 +164,16 @@ jobs:
 
       - uses: ./.github/actions/setup-reference-tooling
 
+      - name: Test media capture
+        if: >-
+          matrix.scenario.lib == 'openai' ||
+          matrix.scenario.lib == 'google-genai'
+        env:
+          SCENARIO_LIB: ${{ matrix.scenario.lib }}
+        run: >-
+          uv run --frozen --python 3.12 --project "scenarios/$SCENARIO_LIB"
+          python -B -m unittest discover -s "scenarios/$SCENARIO_LIB" -p test_media_capture.py -v
+
       - name: Run implementation scenario
         env:
           SCENARIO_LIB: ${{ matrix.scenario.lib }}
