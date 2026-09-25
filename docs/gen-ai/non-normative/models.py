@@ -23,17 +23,21 @@ from __future__ import annotations
 import argparse
 import json
 from base64 import b64decode, b64encode
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, List, Literal, Optional, Union
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
+    Discriminator,
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
     RootModel,
+    Tag,
     ValidationInfo,
     WithJsonSchema,
     field_serializer,
@@ -280,21 +284,45 @@ class GenericPart(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-# This Union without discriminator will generate anyOf in JSON schema
-MessagePart = Union[
+def _get_message_part_tag(part: Any) -> Literal["blob", "other"]:
+    part_type = (
+        part.get("type") if isinstance(part, Mapping) else getattr(part, "type", None)
+    )
+    return "blob" if part_type == "blob" else "other"
+
+
+# Only blob is routed exclusively; other variants keep their existing union behavior.
+_NonBlobMessagePart = Union[
     TextPart,
     ToolCallRequestPart,
     ToolCallResponsePart,
     ServerToolCallPart,
     ServerToolCallResponsePart,
-    BlobPart,
     FilePart,
     UriPart,
     ReasoningPart,
     CompactionPart,
-    GenericPart,  # Catch-all for any other type
+    GenericPart,  # Catch-all for non-blob types
     # Add other message part types here as needed,
     # e.g. structured output, hosted tool call, etc.
+]
+
+
+def _validate_non_blob_part(part: _NonBlobMessagePart) -> _NonBlobMessagePart:
+    if part.type == "blob":
+        raise ValueError("The 'blob' type must be validated as BlobPart.")
+    return part
+
+
+MessagePart = Annotated[
+    Annotated[BlobPart, Tag("blob")]
+    | Annotated[
+        _NonBlobMessagePart,
+        AfterValidator(_validate_non_blob_part),
+        Field(json_schema_extra={"not": {"properties": {"type": {"const": "blob"}}}}),
+        Tag("other"),
+    ],
+    Discriminator(_get_message_part_tag),
 ]
 
 # System instructions are modeled as their own list of parts, independent of
